@@ -1,0 +1,9 @@
+This is a software that computes
+registration of shapes using a OT fidelity.
+
+-----------
+Quick start
+-----------
+
+1) compile the mex files in ./Bin/kernels/ with the makefile.sh
+2) run the various examples in ./Script/ 
