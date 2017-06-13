@@ -1,5 +1,5 @@
 # Will ignore result files in the several examples :
-matlab/*results*
+*results*
 
 # Will ignore DS_Stores files
 .DS_Store
