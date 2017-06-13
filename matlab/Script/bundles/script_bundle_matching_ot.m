@@ -42,4 +42,4 @@ objfun{1}.wasserstein_distance.method=comp_method; % possible values are 'cuda' 
 [momentums,summary]=match_geom(source,target,defo,objfun,optim);
 
 saveDir =['./results/matching_bundles_wasserstein/',date];
-export_matching_tan(source,momentums,zeros(size(source{1}.x,1),1),target,summary,saveDir)
+export_matching_tan(source,momentums,zeros(size(source.x,1),1),target,summary,saveDir)
