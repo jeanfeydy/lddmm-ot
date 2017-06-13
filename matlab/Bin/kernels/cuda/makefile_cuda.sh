@@ -16,7 +16,7 @@ MATLABROOT="/usr/local/MATLAB/R2014a"
 CUDAROOT="/usr/local/cuda-7.5/lib64"
 MEXC="$MATLABROOT/bin/mex"
 CC="/usr/bin/gcc"
-NVCC="/usr/local/cuda-7.5/bin/nvcc"
+NVCC="nvcc"
 
 # CHECK THESE PARAMETERS (depends on your GPU):
 COMPUTECAPABILITY=35

@@ -1,0 +1,14 @@
+# Will ignore result files in the several examples :
+matlab/*results*
+
+# Will ignore DS_Stores files
+.DS_Store
+
+# Will ignore .nfs files
+.nfs*
+
+#Will ignore vim swap
+*.swp
+#
+#Will ignore temp files
+*~
