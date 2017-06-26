@@ -26,7 +26,7 @@ N.B. : To use your Nvidia GPU, don't forget to put the appropriate settings in
 your .theanorc (http://www.deeplearning.net/software/theano/tutorial/using_gpu.html).
 For our experiments, it was simply :
 
-"""
+```markdown
 [nvcc]
 flags=-D_FORCE_INLINES
 
@@ -35,7 +35,7 @@ flags=-D_FORCE_INLINES
 device=cuda
 floatX=float32
 exception_verbosity=high
-"""
+```
 
 (With an Nvidia GeForce GTX 960M)
 
