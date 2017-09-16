@@ -27,7 +27,7 @@ def display_plan(fname, renderView) :
 	plan_1vtk = LegacyVTKReader(FileNames=[fname])
 	plan_1vtkDisplay = display_reader(plan_1vtk, renderView)
 	plan_1vtkDisplay.SetRepresentationType('Wireframe')
-	plan_1vtkDisplay.AmbientColor = [0.61, 0.8, 1.0]
+	plan_1vtkDisplay.AmbientColor = [0.7, 0.87, 1.0]
 
 def display_target(fname, renderView) :
 	targetvtk = LegacyVTKReader(FileNames=[fname])
@@ -79,13 +79,13 @@ def screenshot(renderView1, fname) :
 	#renderView1.ResetCamera()
 	#renderView1.InteractionMode = '2D'
 	renderView1.CameraViewAngle = 45
-	renderView1.CameraPosition = [0.0, 0.0, 1.]
+	renderView1.CameraPosition = [0.0, 0.0, 2.]
 	renderView1.CameraFocalPoint = [0.0, 0.0, 0.0]
 	#renderView1.CameraParallelScale = 1.7482104584020597
 
 	# save screenshot
-	SaveScreenshot(fname, magnification=1, quality=100, view=renderView1)
-
+	#SaveScreenshot(fname, magnification=1, quality=100, view=renderView1)
+	ExportView(fname, view=renderView1)
 
 def display_final_matching(folder, ruler = None) :
 	targetfname = 'results/vtk_files/' + folder + '/Target.vtk'
@@ -119,12 +119,22 @@ def display_descent(folder, iterations) :
 	for it in iterations :
 		modelfname  = 'results/vtk_files/' + folder + '/Descent/Models/Model_' + str(it) + '.vtk'
 		planfname  = 'results/vtk_files/' + folder + '/Descent/Plans/Plan_' + str(it) + '.vtk'
-		outfname    = 'results/images/descent_' + folder + '_it-' + str(it) + '.png'
+		gridfname  = 'results/vtk_files/' + folder + '/Descent/Grids/Grid_' + str(it) + '.vtk'
+		outfname    = 'results/images/descent_' + folder + '_it-' + str(it) + '.svg'
 		renderView1 = get_view()
-		display_target(targetfname, renderView1)
+		display_grid(gridfname, renderView1)
 		display_plan(planfname, renderView1)
+		display_target(targetfname, renderView1)
 		display_model(modelfname, renderView1)
 		screenshot(renderView1, outfname)
+
+def display_grid(gridfname, renderView, linewidth = 1.0, color = [.7,.7,.7]) :
+	"""Displays a VTK file with a light gray scheme - typically a grid."""
+	grid        = LegacyVTKReader(FileNames=[gridfname])
+	gridDisplay = display_reader(grid, renderView)
+	gridDisplay.SetRepresentationType('Wireframe')
+	gridDisplay.LineWidth    = linewidth
+	gridDisplay.AmbientColor = color
 
 def display_ruler(name, length, view) :
 	# create a new 'Ruler'
@@ -149,7 +159,7 @@ def display_ruler(name, length, view) :
 	
 
 def display_dataset() :
-	folder = 'kernel_big'
+	folder = 'sinkhorn_eps-s_rho-l'
 	targetfname = 'results/vtk_files/' + folder + '/Target.vtk'
 	modelfname  = 'results/vtk_files/' + folder + '/Template.vtk'
 	gridfname  = 'results/vtk_files/' + folder + '/Grid/grid_0.vtk'
@@ -167,16 +177,17 @@ def display_dataset() :
 	display_model(modelfname, renderView)
 	screenshot(renderView, outfname)
 
-display_dataset()
-display_final_matching('kernel_big', ruler = ('$\\sigma$', .2))
-display_final_matching('kernel_small', ruler = ('$\\sigma$', .05))
+#display_dataset()
+#display_final_matching('kernel_big', ruler = ('$\\sigma$', .2))
+#display_final_matching('kernel_small', ruler = ('$\\sigma$', .05))
 
-display_final_matching('sinkhorn_eps-l_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .1))
-display_final_matching('sinkhorn_eps-m_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .03))
-display_final_matching('sinkhorn_eps-s_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .015))
+#display_final_matching('sinkhorn_eps-l_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .1))
+#display_final_matching('sinkhorn_eps-m_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .03))
+#display_final_matching('sinkhorn_eps-s_rho-l', ruler = ('$\\sqrt{\\epsilon}$', .015))
 
-display_first_plan('sinkhorn_eps-m_rho-s', ruler = ('$\\sqrt{\\rho}$', .1))
-display_first_plan('sinkhorn_eps-m_rho-m', ruler = ('$\\sqrt{\\rho}$', .15))
-display_first_plan('sinkhorn_eps-m_rho-l', ruler = ('$\\sqrt{\\rho}$', .5))
+#display_first_plan('sinkhorn_eps-m_rho-s', ruler = ('$\\sqrt{\\rho}$', .1))
+#display_first_plan('sinkhorn_eps-m_rho-m', ruler = ('$\\sqrt{\\rho}$', .15))
+#display_first_plan('sinkhorn_eps-m_rho-l', ruler = ('$\\sqrt{\\rho}$', .5))
 
-display_descent('sinkhorn_eps-s_rho-l', [1, 5, 10, 20, 40])
+#display_descent('sinkhorn_eps-s_rho-l', [1, 5, 10, 20, 40])
+display_descent('sinkhorn_eps-s_rho-l', [1, 5, 10, 20, 40, 68])

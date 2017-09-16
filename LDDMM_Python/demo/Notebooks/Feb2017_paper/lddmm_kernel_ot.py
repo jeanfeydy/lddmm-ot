@@ -194,14 +194,17 @@ class Curve :
 		ax.add_collection(line_segments)
 		
 	@staticmethod
-	def from_file(fname) :
+	def from_file(fname, offset=True) :
 		if   fname[-4:] == '.png' :
 			return level_curves(fname)
 		elif fname[-4:] == '.vtk' :
 			data = VtkData(fname)
 			points = np.array(data.structure.points)[:,0:2] # Discard "Z"
 			connec = np.array(data.structure.polygons)
-			return Curve((points + 150)/300, connec)
+			if offset :
+				return Curve((points + 150)/300, connec)
+			else :
+				return Curve(points, connec)
 			
 
 

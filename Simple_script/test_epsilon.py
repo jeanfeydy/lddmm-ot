@@ -22,6 +22,9 @@ from scipy import misc
 from scipy.ndimage.filters import gaussian_filter
 from scipy.interpolate import interp1d
 
+EPS = .02
+
+
 def arclength_param(line) :
 	"Arclength parametrisation of a piecewise affine curve."
 	vel = line[1:, :] - line[:-1, :]
@@ -96,16 +99,16 @@ def ShowTransport( Q, Xt, Gamma, ax ) :
 	for (a, mui, gi) in zip(Q_points, Q_weights, Gamma) :
 		gi = gi / mui # gi[j] = fraction of the mass from "a" which goes to xtpoints[j]
 		for (seg, gij) in zip(Xt.connectivity, gi) :
-			mass_per_line = 0.05
+			mass_per_line = 0.01
 			if gij >= mass_per_line :
 				nlines = np.floor(gij / mass_per_line)
-				ts     = np.linspace(.35, .65, nlines)
+				ts     = np.linspace(.48, .52, nlines)
 				for t in ts :
 					b = (1-t) * xtpoints[seg[0]] + t * xtpoints[seg[1]]
 					points += [a, b]; connectivity += [[curr_id, curr_id + 1]]; curr_id += 2
 	if len(connectivity) > 0 :
 		Plan = Curve(np.vstack(points), np.vstack(connectivity))
-		Plan.plot(ax, color = (.8,.9,1.), linewidth = 1)
+		Plan.plot(ax, color = (.8,.9,1.,.1), linewidth = 1)
 
 def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach, form='.svg') :
 	"Displays a pyplot Figure and save it."
@@ -132,7 +135,11 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach,
 		ax.imshow(info, interpolation='bilinear', origin='lower', 
 				vmin = -scale_attach, vmax = scale_attach, cmap=cm.RdBu, 
 				extent=(0,1, 0, 1)) 
-	G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
+	#G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
+	
+	ruler = Curve([[.3-scale_momentum/2,.8],[.3+scale_momentum/2,.8]], [[0,1]])
+	ruler.plot(ax, color = (1.,0.,0.), linewidth = 1)
+	
 	Xt.plot(ax, color = (.76, .29, 1.))
 	Q1.plot(ax)
 	
@@ -307,7 +314,7 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	mu = q1_mu ; nu = xt_mu
 	
 	# Parameters of the Sinkhorn algorithm.
-	epsilon            = (.01)**2          # regularization parameter
+	epsilon            = (EPS)**2          # regularization parameter
 	rho                = (.5) **2          # unbalanced transport (See PhD Th. of Lenaic Chizat)
 	niter              = 10000             # max niter in the sinkhorn loop
 	tau                = -.8               # nesterov-like acceleration
@@ -476,7 +483,7 @@ def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 					method = 'L-BFGS-B',  # an order 2 method
 					jac = True,           # matching_problems also returns the gradient
 					options = dict(
-						maxiter = 1000,   # max number of iterations
+						maxiter = 2,   # max number of iterations
 						ftol    = .00000001,# Don't bother fitting the shapes to float precision
 						maxcor  = 10      # Number of previous grads used to approx. the Hessian
 					))
@@ -499,7 +506,7 @@ if __name__ == '__main__' :
 	plt.ion()
 	plt.show()
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.05,.01), scale_mom = .3,scale_att = .1)
-	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = 1.5, scale_att = 0)
+	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = EPS, scale_att = 0)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,.01), scale_mom = 1.5,scale_att = .1)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = 1.5,scale_att = 0)
 

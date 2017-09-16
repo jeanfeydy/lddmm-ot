@@ -1,10 +1,6 @@
 # Import the relevant tools
 import time                 # to measure performance
 import numpy as np          # standard array library
-import theano               # Autodiff & symbolic calculus library :
-import theano.tensor as T   #             - mathematical tools;
-from   theano import config, printing #   - printing of the Sinkhorn error.
-
 
 # Display routines :
 import matplotlib.cm as cm
@@ -21,6 +17,9 @@ from skimage.measure import find_contours
 from scipy import misc
 from scipy.ndimage.filters import gaussian_filter
 from scipy.interpolate import interp1d
+
+EPS = .03
+
 
 def arclength_param(line) :
 	"Arclength parametrisation of a piecewise affine curve."
@@ -96,34 +95,21 @@ def ShowTransport( Q, Xt, Gamma, ax ) :
 	for (a, mui, gi) in zip(Q_points, Q_weights, Gamma) :
 		gi = gi / mui # gi[j] = fraction of the mass from "a" which goes to xtpoints[j]
 		for (seg, gij) in zip(Xt.connectivity, gi) :
-			mass_per_line = 0.05
+			mass_per_line = 0.01
 			if gij >= mass_per_line :
 				nlines = np.floor(gij / mass_per_line)
-				ts     = np.linspace(.35, .65, nlines)
+				ts     = np.linspace(.48, .52, nlines)
 				for t in ts :
 					b = (1-t) * xtpoints[seg[0]] + t * xtpoints[seg[1]]
 					points += [a, b]; connectivity += [[curr_id, curr_id + 1]]; curr_id += 2
 	if len(connectivity) > 0 :
 		Plan = Curve(np.vstack(points), np.vstack(connectivity))
-		Plan.plot(ax, color = (.8,.9,1.), linewidth = 1)
+		Plan.plot(ax, color = (.8,.9,1.,.05), linewidth = 1.5)
 
-def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach, form='.svg') :
+def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach, form='.png', framenumber=0, nframes = 1) :
 	"Displays a pyplot Figure and save it."
-	# Figure at "t = 0" : -----------------------------------------------------------------------
-	fig = plt.figure(1, figsize = (10,10), dpi=100); fig.clf(); ax = fig.add_subplot(1, 1, 1)
-	ax.autoscale(tight=True)
-	
-	G0.plot(ax, color = (.8,.8,.8), linewidth = 1)
-	Xt.plot(ax, color = (.85, .6, 1.))
-	Q0.plot(ax)
-	ax.quiver( Q0.points[:,0], Q0.points[:,1], p0[:,0], p0[:,1], 
-	           scale = scale_momentum, color='blue')
-	
-	ax.axis([0, 1, 0, 1]) ; ax.set_aspect('equal') ; plt.draw() ; plt.pause(0.001)
-	fig.savefig( 'output/momentum_' + str(it) + form )
-	
 	# Figure at "t = 1" : -----------------------------------------------------------------------
-	fig = plt.figure(2, figsize = (20,20), dpi=100); fig.clf(); ax = fig.add_subplot(1, 1, 1)
+	fig = plt.figure(2, figsize = (20,20), dpi=50); fig.clf(); ax = fig.add_subplot(1, 1, 1)
 	ax.autoscale(tight=True)
 	
 	if scale_attach == 0 : # Convenient way of saying that we're using a transport plan.
@@ -132,12 +118,22 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach,
 		ax.imshow(info, interpolation='bilinear', origin='lower', 
 				vmin = -scale_attach, vmax = scale_attach, cmap=cm.RdBu, 
 				extent=(0,1, 0, 1)) 
-	G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
-	Xt.plot(ax, color = (.76, .29, 1.))
-	Q1.plot(ax)
+	#G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
 	
-	ax.axis([-.5, 1.5, -.5, 1.5]) ; ax.set_aspect('equal') ; plt.draw() ; plt.pause(0.001)
-	fig.savefig( 'output/model_' + str(it) + form )
+	#ruler = Curve([[.3-scale_momentum/2,.8],[.3+scale_momentum/2,.8]], [[0,1]])
+	#ruler.plot(ax, color = (1.,0.,0.), linewidth = 1)
+	
+	Xt.plot(ax, color = (0., 0., .8), linewidth = 5)
+	Q1.plot(ax, color = (.8, 0., 0.), linewidth = 5)
+	title = 'Sinkhorn Iteration ' + str(it).zfill(3)
+	ax.text(0.5, 0., title, horizontalalignment='center', verticalalignment='center',\
+	        transform = ax.transAxes, size=48)
+	ax.axis([0, 1, 0, 1]) ; ax.set_aspect('equal') ; plt.draw() ; 
+	plt.axis('off')
+	plt.pause(0.001)
+	
+	for fn in range(framenumber, framenumber + nframes) :
+		fig.savefig( 'output/sinkhorn_simple/iteration_' + str(fn).zfill(5) + form, bbox_inches='tight')
 # Curve representations =========================================================================
 
 class Curve :
@@ -206,110 +202,17 @@ class Curve :
 
 
 
-
-
-# My .theanorc reads as follow :
-# [nvcc]
-# flags=-D_FORCE_INLINES
-#
-# [global]
-# device=cuda
-# floatX=float32
-#
-# The first section, copy-pasted from the "easy-install on Ubuntu", is supposed to fix a gcc bug.
-# The second one allows me to use my GPU as the default computing device in float32 precision.
-#
-# On my Dell laptop, it is a GeForce GTX 960M with 640 Cuda cores and 2Gb of memory.
-
-
-# Theano is a fantastic deep learning library : it transforms symbolic python code
-# into highly optimized CPU/GPU binaries, which are called in the background seamlessly.
-#
-# We now show how to code a whole LDDMM pipeline into one (!!!) page of theano symbolic code.
-
-# Part 1 : cometric on the space of landmarks, kinetic energy on the phase space (Hamiltonian)===
-
-
-def _squared_distances(x, y) :
-	"Returns the matrix of $\|x_i-y_j\|^2$."
-	x_col = x.dimshuffle(0, 'x', 1)
-	y_lin = y.dimshuffle('x', 0, 1)
-	return T.sum( (x_col - y_lin)**2 , 2 )
-
-def _k(x, y, s) :
-	"Returns the matrix of k(x_i,y_j)."
-	sq = _squared_distances(x, y) / (s**2)
-	return T.pow( 1. / ( 1. + sq ), .25 )
-
-def _cross_kernels(q, x, s) :
-	"Returns the full k-correlation matrices between two point clouds q and x."
-	K_qq = _k(q, q, s)
-	K_qx = _k(q, x, s)
-	K_xx = _k(x, x, s)
-	return (K_qq, K_qx, K_xx)
-
-def _Hqp(q, p, sigma) :
-	"The hamiltonian, or kinetic energy of the shape q with momenta p."
-	pKqp =  _k(q, q, sigma) * (p.dot(p.T))# Use a simple isotropic kernel
-	return .5 * T.sum(pKqp)               # $H(q,p) = \frac{1}{2} * sum_{i,j} k(x_i,x_j) p_i.p_j$
-    
-    
-# Part 2 : Geodesic shooting ====================================================================
-# The partial derivatives of the Hamiltonian are automatically computed !
-def _dq_Hqp(q,p,sigma) : 
-	return T.grad(_Hqp(q,p,sigma), q)
-def _dp_Hqp(q,p,sigma) :
-	return T.grad(_Hqp(q,p,sigma), p)
-
-def _hamiltonian_step(q,p, sigma) :
-	"Simplistic euler scheme step with dt = .1."
-	return [q + .1 * _dp_Hqp(q,p,sigma) ,  # See eq. 
-			p - .1 * _dq_Hqp(q,p,sigma) ]
-
-def _HamiltonianShooting(q, p, sigma) :
-	"Shoots to time 1 a k-geodesic starting (at time 0) from q with momentum p."
-	# Here, we use the "scan" theano routine, which  can be understood as a "for" loop
-	result, updates = theano.scan(fn            = _hamiltonian_step,
-								  outputs_info  = [q,p],
-								  non_sequences = sigma,
-								  n_steps       = 10            )  # We hardcode the "dt = .1"
-	final_result = [result[0][-1], result[1][-1]]  # We do not store the intermediate results
-	return final_result                            # and only return the final state + momentum
-
-
-
-# Part 2bis : Geodesic shooting + deformation of the ambient space, for visualization ===========
-def _HamiltonianCarrying(q0, p0, grid0, sigma) :
-	"""
-	Similar to _HamiltonianShooting, but also conveys information about the deformation of
-	an arbitrary point cloud 'grid' in the ambient space.
-	""" 
-	def _carrying_step(q,p,g,s) :
-		"Simplistic euler scheme step with dt = .1."
-		return [q + .1 * _dp_Hqp(q,p, s),  p - .1 * _dq_Hqp(q,p, s), g + .1 * _k(g, q, s).dot(p)]
-	# Here, we use the "scan" theano routine, which  can be understood as a "for" loop
-	result, updates = theano.scan(fn            = _carrying_step,
-								  outputs_info  = [q0,p0,grid0],
-								  non_sequences = sigma,
-								  n_steps       = 10           ) # We hardcode the "dt = .1"
-	final_result = [result[0][-1], result[1][-1], result[2][-1]] # Don't store intermediate steps
-	return final_result                            # return the final state + momentum + grid
-
 # Part 3 : Data attachment ======================================================================
-
+"""
 def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
-	"""
-	Given two measures q1 and xt represented by locations/weights arrays, 
-	outputs an optimal transport fidelity term and the transport plan.
-	"""
 	# The Sinkhorn algorithm takes as input three Theano variables :
 	c = _squared_distances(q1_x, xt_x) # Wasserstein cost function
 	mu = q1_mu ; nu = xt_mu
 	
 	# Parameters of the Sinkhorn algorithm.
-	epsilon            = (.01)**2          # regularization parameter
+	epsilon            = (EPS)**2          # regularization parameter
 	rho                = (.5) **2          # unbalanced transport (See PhD Th. of Lenaic Chizat)
-	niter              = 10000             # max niter in the sinkhorn loop
+	niter              = 50             # max niter in the sinkhorn loop
 	tau                = -.8               # nesterov-like acceleration
 	
 	lam = rho / (rho + epsilon)            # Update exponent
@@ -342,67 +245,70 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	U, V = result[0][-1], result[1][-1] # We only keep the final dual variables
 	Gamma = T.exp( M(U,V) )             # Eventual transport plan g = diag(a)*K*diag(b)
 	cost  = T.sum( Gamma * c )         # Simplistic cost, chosen for readability in this tutorial
-	if False :
+	if True :
 		print_err_shape = printing.Print('error  : ', attrs=['shape'])
 		errors          = print_err_shape(result[2])
 		print_err  = printing.Print('error  : ') ; err_fin  = print_err(errors[-1])
 		cost += .00000001 * err_fin   # hack to prevent the pruning of the error-printing node...
 	return [cost, Gamma]
-def _kernel_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
-	"""
-	Given two measures q1 and xt represented by locations/weights arrays, 
-	outputs a kernel-fidelity term and an empty 'info' array.
-	"""
-	K_qq, K_qx, K_xx = _cross_kernels(q1_x, xt_x, radius)
-	q1_mu = q1_mu.dimshuffle(0,'x')  # column
-	xt_mu = xt_mu.dimshuffle(0,'x')  # column
-	cost = .5 * (   T.sum(K_qq * q1_mu.dot(q1_mu.T)) \
-				 +  T.sum(K_xx * xt_mu.dot(xt_mu.T)) \
-				 -2*T.sum(K_qx * q1_mu.dot(xt_mu.T))  )
-				 
-	# Info = the 2D graph of the blurred distance function
-	res    = 10 ; ticks = np.linspace( 0, 1, res + 1)[:-1] + 1/(2*res) 
-	X,Y    = np.meshgrid( ticks, ticks )
-	points = T.TensorConstant( T.TensorType( config.floatX, [False,False] ) ,
-							   np.vstack( (X.ravel(), Y.ravel()) ).T.astype(config.floatX) )
-							   
-	info   = _k( points, q1_x , radius ).dot(q1_mu) \
-	       - _k( points, xt_x , radius ).dot(xt_mu)
-	return [cost , info.reshape( (res,res) ) ]
+"""
 
-def _data_attachment(q1_measure, xt_measure, radius) :
-	"Given two measures and a radius, returns a cost - as a Theano symbolic variable."
-	if radius == 0 : # Convenient way to allow the choice of a method
-		return _ot_matching(q1_measure[0], q1_measure[1], 
-								xt_measure[0], xt_measure[1], 
-								radius)
-	else :
-		return _kernel_matching(q1_measure[0], q1_measure[1], 
-								xt_measure[0], xt_measure[1], 
-								radius)
-
-# Part 4 : Cost function and derivatives ========================================================
-
-def _cost( q,p, xt_measure, connec, params ) :
-	"""
-	Returns a total cost, sum of a small regularization term and the data attachment.
-	.. math ::
+def ot_matching(q1_x, q1_mu, xt_x, xt_mu, tau = -.8) :
+	"Full Python implementation !"
+	x_col = q1_x.reshape((q1_x.shape[0], 1, q1_x.shape[1]))
+	y_lin = xt_x.reshape((1, xt_x.shape[0], xt_x.shape[1]))
+	c = np.sum( (x_col - y_lin)**2 , 2 )
+	mu = q1_mu ; nu = xt_mu
 	
-		C(q_0, p_0) = .1 * H(q0,p0) + 1 * A(q_1, x_t)
+	# Parameters of the Sinkhorn algorithm.
+	epsilon            = (EPS)**2          # regularization parameter
+	rho                = (.5) **2          # unbalanced transport (See PhD Th. of Lenaic Chizat)
+	niter              = 1000                # max niter in the sinkhorn loop
+	#tau                = -.8               # nesterov-like acceleration
 	
-	Needless to say, the weights can be tuned according to the signal-to-noise ratio.
-	"""
-	s,r  = params                        # Deformation scale, Attachment scale
-	q1 = _HamiltonianShooting(q,p,s)[0]  # Geodesic shooting from q0 to q1
-	# To compute a data attachment cost, we need the set of vertices 'q1' into a measure.
-	q1_measure  = Curve._vertices_to_measure( q1, connec ) 
-	attach_info = _data_attachment( q1_measure,  xt_measure,  r )
-	return [ .01* _Hqp(q, p, s) + 1* attach_info[0] , attach_info[1] ]
-
-# The discrete backward scheme is automatically computed :
-def _dcost_p( q,p, xt_measure, connec, params ) :
-	"The gradients of C wrt. p_0 is automatically computed."
-	return T.grad( _cost(q,p, xt_measure, connec, params)[0] , p)
+	lam = rho / (rho + epsilon)            # Update exponent
+	
+	# Elementary operations .....................................................................
+	def ave(u,u1) : 
+		"Barycenter subroutine, used by kinetic acceleration through extrapolation."
+		return tau * u + (1-tau) * u1 
+	def M(u,v)  : 
+		"$M_{ij} = (-c_{ij} + u_i + v_j) / \epsilon$"
+		return (-c + u[:,np.newaxis] + v[np.newaxis]) / epsilon
+	lse = lambda A    : np.log(np.sum( np.exp(A), axis=1 ) + 1e-6) # slight modif to prevent NaN
+	
+	# Actual Sinkhorn loop ......................................................................
+	# Iteration step :
+	def sinkhorn_step(u, v, foo) :
+		u1=u # useful to check the update
+		u = ave( u, lam * ( epsilon * ( np.log(mu) - lse(M(u,v))   ) + u ) )
+		v = ave( v, lam * ( epsilon * ( np.log(nu) - lse(M(u,v).T) ) + v ) )
+		err = np.sum(np.abs(u - u1))
+		
+		return u,v,err # "break" the loop if error < tol
+		
+	# Scan = "For loop" :
+	u = 0.*mu; v = 0.*nu; err_it = 1;
+	errs = []; gammas = []; costs = [];
+	for it in range(niter) :
+		gamma_it = np.exp( M(u,v) )
+		cost     = np.sum( gamma_it * c ) + epsilon * np.sum( gamma_it * np.log(gamma_it + 1e-9) )
+		print(cost)
+		
+		errs.append( err_it )
+		gammas.append( gamma_it )
+		costs.append( cost )
+		
+		(u,v,err_it) = sinkhorn_step( u, v, 0)
+		if err_it < 1e-7 :
+			break
+		
+		
+	costs = np.array(costs)
+	errs  = np.array(errs)
+	return [gammas, costs, errs]
+	
+	
 
 #================================================================================================
 
@@ -421,85 +327,50 @@ def VisualizationRoutine(Q0, params) :
 def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 	"Performs a matching from the source Q0 to the target Xt, returns the optimal momentum P0."
 	(Xt_x, Xt_mu) = Xt.to_measure()      # Transform the target into a measure once and for all
+	(Q0_x, Q0_mu) = Q0.to_measure()
 	q0 = Q0.points ; p0 = np.zeros(q0.shape)    # Null initialization for the shooting momentum
 	
-	# Compilation -------------------------------------------------------------------------------
-	print('Compiling the energy functional.')
-	time1 = time.time()
-	# Cost is a function of 6 parameters :
-	# The source 'q',                    the starting momentum 'p',
-	# the target points 'xt_x',          the target weights 'xt_mu',
-	# the deformation scale 'sigma_def', the attachment scale 'sigma_att'.
-	q, p, xt_x = T.matrices('q', 'p', 'xt_x') ; xt_mu = T.vector('xt_mu') #  assign types
-	
-	# Compilation. Depending on settings specified in the ~/.theanorc file or explicitely given
-	# at execution time, this will produce CPU or GPU code under the hood.
-	Cost  = theano.function([q,p, xt_x,xt_mu ],
-							[   _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[0], 
-							 _dcost_p( q,p, (xt_x,xt_mu), Q0.connectivity, params )   ,
-							    _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[1] ],  
-							allow_input_downcast=True)
-	time2 = time.time()   
-	print('Compiled in : ', '{0:.2f}'.format(time2 - time1), 's')
+	[gammas, costs, errs] = ot_matching(Q0_x, Q0_mu, Xt_x, Xt_mu, tau = 0.)
 	
 	# Display pre-computing ---------------------------------------------------------------------
 	connec = Q0.connectivity ; q0 = Q0.points ; g0,cgrid = GridData() ; G0 = Curve(g0, cgrid )
 	# Given q0, p0 and grid points grid0 , outputs (q1,p1,grid1) after the flow
 	# of the geodesic equations from t=0 to t=1 :
-	ShootingVisualization = VisualizationRoutine(q0, params) 
+	#ShootingVisualization = VisualizationRoutine(q0, params) 
 	
-	# L-BFGS minimization -----------------------------------------------------------------------
-	from scipy.optimize import minimize
-	def matching_problem(p0_vec) :
-		"Energy minimized in the variable 'p0'."
-		p0 = p0_vec.reshape(q0.shape)
-		[c, dp_c, info] = Cost(q0, p0, Xt_x, Xt_mu)
-		matching_problem.Info = info
-		
-		if (matching_problem.it % 1 == 0) and (c < matching_problem.bestc) :
-			matching_problem.bestc = c
-			q1,p1,g1 = ShootingVisualization(q0, p0, np.array(g0))
-			Q1 = Curve(q1, connec) ; G1 = Curve(g1, cgrid )
-			DisplayShoot( Q0, G0, p0, Q1, G1, Xt, info, 
-			              matching_problem.it, scale_momentum, scale_attach)
-		
-		print('Iteration : ', matching_problem.it, ', cost : ', c, ' info : ', info.shape)
-		matching_problem.it += 1
-		# The fortran routines used by scipy.optimize expect float64 vectors
-		# instead of the gpu-friendly float32 matrices, so we need a slight conversion
-		return (c, dp_c.ravel().astype('float64'))
-	matching_problem.bestc = np.inf ; matching_problem.it = 0 ; matching_problem.Info = None
+	costs_errs = np.vstack( (costs, errs) ).T
+	np.savetxt('output/sinkhorn_simple/costs_errs.csv', costs_errs)
 	
-	time1 = time.time()
-	res = minimize( matching_problem,     # function to minimize
-					p0.ravel(),           # starting estimate
-					method = 'L-BFGS-B',  # an order 2 method
-					jac = True,           # matching_problems also returns the gradient
-					options = dict(
-						maxiter = 1000,   # max number of iterations
-						ftol    = .00000001,# Don't bother fitting the shapes to float precision
-						maxcor  = 10      # Number of previous grads used to approx. the Hessian
-					))
-	time2 = time.time()
+	framenumber = 0
+	for (it, Gamma) in enumerate(gammas) :
+		if it % 1 == 0 :
+			if it < 4 :
+				nframes = 8
+			elif it < 10 :
+				nframes = 4
+			elif it < 20 :
+				nframes = 2
+			else :
+				nframes = 1
+				
+			DisplayShoot( Q0, G0, p0, Q0, G0, Xt, Gamma, 
+							it, scale_momentum, scale_attach, framenumber = framenumber, nframes = nframes)
+							
+			framenumber = framenumber + nframes
 	
-	p0 = res.x.reshape(q0.shape)
-	print('Convergence success  : ', res.success, ', status = ', res.status)
-	print('Optimization message : ', res.message.decode('UTF-8'))
-	print('Final cost   after ', res.nit, ' iterations : ', res.fun)    
-	print('Elapsed time after ', res.nit, ' iterations : ', '{0:.2f}'.format(time2 - time1), 's')
-	return p0, matching_problem.Info
+	return 0
 def matching_demo(source_file, target_file, params, scale_mom = 1, scale_att = 1) :
 	Q0 = Curve.from_file(source_file) # Load source...
 	Xt = Curve.from_file(target_file) # and target.
 	
 	# Compute the optimal shooting momentum :
-	p0, info = perform_matching( Q0, Xt, params, scale_mom, scale_att) 
+	t = perform_matching( Q0, Xt, params, scale_mom, scale_att) 
 
 if __name__ == '__main__' :
 	plt.ion()
 	plt.show()
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.05,.01), scale_mom = .3,scale_att = .1)
-	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = 1.5, scale_att = 0)
+	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = EPS, scale_att = 0)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,.01), scale_mom = 1.5,scale_att = .1)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = 1.5,scale_att = 0)
 

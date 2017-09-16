@@ -22,6 +22,9 @@ from scipy import misc
 from scipy.ndimage.filters import gaussian_filter
 from scipy.interpolate import interp1d
 
+EPS = .01
+
+
 def arclength_param(line) :
 	"Arclength parametrisation of a piecewise affine curve."
 	vel = line[1:, :] - line[:-1, :]
@@ -96,16 +99,16 @@ def ShowTransport( Q, Xt, Gamma, ax ) :
 	for (a, mui, gi) in zip(Q_points, Q_weights, Gamma) :
 		gi = gi / mui # gi[j] = fraction of the mass from "a" which goes to xtpoints[j]
 		for (seg, gij) in zip(Xt.connectivity, gi) :
-			mass_per_line = 0.05
+			mass_per_line = 0.01
 			if gij >= mass_per_line :
 				nlines = np.floor(gij / mass_per_line)
-				ts     = np.linspace(.35, .65, nlines)
+				ts     = np.linspace(.48, .52, nlines)
 				for t in ts :
 					b = (1-t) * xtpoints[seg[0]] + t * xtpoints[seg[1]]
 					points += [a, b]; connectivity += [[curr_id, curr_id + 1]]; curr_id += 2
 	if len(connectivity) > 0 :
 		Plan = Curve(np.vstack(points), np.vstack(connectivity))
-		Plan.plot(ax, color = (.8,.9,1.), linewidth = 1)
+		Plan.plot(ax, color = (.8,.9,1.,.1), linewidth = 1)
 
 def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach, form='.svg') :
 	"Displays a pyplot Figure and save it."
@@ -132,7 +135,11 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach,
 		ax.imshow(info, interpolation='bilinear', origin='lower', 
 				vmin = -scale_attach, vmax = scale_attach, cmap=cm.RdBu, 
 				extent=(0,1, 0, 1)) 
-	G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
+	#G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
+	
+	ruler = Curve([[.3-scale_momentum/2,.8],[.3+scale_momentum/2,.8]], [[0,1]])
+	ruler.plot(ax, color = (1.,0.,0.), linewidth = 1)
+	
 	Xt.plot(ax, color = (.76, .29, 1.))
 	Q1.plot(ax)
 	
@@ -307,9 +314,9 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	mu = q1_mu ; nu = xt_mu
 	
 	# Parameters of the Sinkhorn algorithm.
-	epsilon            = (.01)**2          # regularization parameter
+	epsilon            = (EPS)**2          # regularization parameter
 	rho                = (.5) **2          # unbalanced transport (See PhD Th. of Lenaic Chizat)
-	niter              = 10000             # max niter in the sinkhorn loop
+	niter              = 50             # max niter in the sinkhorn loop
 	tau                = -.8               # nesterov-like acceleration
 	
 	lam = rho / (rho + epsilon)            # Update exponent
@@ -342,7 +349,7 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	U, V = result[0][-1], result[1][-1] # We only keep the final dual variables
 	Gamma = T.exp( M(U,V) )             # Eventual transport plan g = diag(a)*K*diag(b)
 	cost  = T.sum( Gamma * c )         # Simplistic cost, chosen for readability in this tutorial
-	if False :
+	if True :
 		print_err_shape = printing.Print('error  : ', attrs=['shape'])
 		errors          = print_err_shape(result[2])
 		print_err  = printing.Print('error  : ') ; err_fin  = print_err(errors[-1])
@@ -421,6 +428,7 @@ def VisualizationRoutine(Q0, params) :
 def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 	"Performs a matching from the source Q0 to the target Xt, returns the optimal momentum P0."
 	(Xt_x, Xt_mu) = Xt.to_measure()      # Transform the target into a measure once and for all
+	(Q0_x, Q0_mu) = Q0.to_measure()
 	q0 = Q0.points ; p0 = np.zeros(q0.shape)    # Null initialization for the shooting momentum
 	
 	# Compilation -------------------------------------------------------------------------------
@@ -430,14 +438,12 @@ def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 	# The source 'q',                    the starting momentum 'p',
 	# the target points 'xt_x',          the target weights 'xt_mu',
 	# the deformation scale 'sigma_def', the attachment scale 'sigma_att'.
-	q, p, xt_x = T.matrices('q', 'p', 'xt_x') ; xt_mu = T.vector('xt_mu') #  assign types
+	q1_x, xt_x = T.matrices('q1_x', 'xt_x') ; q1_mu, xt_mu = T.vectors('q1_mu', 'xt_mu') #  assign types
 	
 	# Compilation. Depending on settings specified in the ~/.theanorc file or explicitely given
 	# at execution time, this will produce CPU or GPU code under the hood.
-	Cost  = theano.function([q,p, xt_x,xt_mu ],
-							[   _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[0], 
-							 _dcost_p( q,p, (xt_x,xt_mu), Q0.connectivity, params )   ,
-							    _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[1] ],  
+	Cost  = theano.function([q1_x, q1_mu, xt_x,xt_mu ],
+							   _ot_matching(q1_x, q1_mu, xt_x, xt_mu, 0),  
 							allow_input_downcast=True)
 	time2 = time.time()   
 	print('Compiled in : ', '{0:.2f}'.format(time2 - time1), 's')
@@ -446,60 +452,25 @@ def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 	connec = Q0.connectivity ; q0 = Q0.points ; g0,cgrid = GridData() ; G0 = Curve(g0, cgrid )
 	# Given q0, p0 and grid points grid0 , outputs (q1,p1,grid1) after the flow
 	# of the geodesic equations from t=0 to t=1 :
-	ShootingVisualization = VisualizationRoutine(q0, params) 
+	#ShootingVisualization = VisualizationRoutine(q0, params) 
+	Gamma = Cost( Q0_x, Q0_mu, Xt_x, Xt_mu)[1]
+	DisplayShoot( Q0, G0, p0, Q0, G0, Xt, Gamma, 
+			              1, scale_momentum, scale_attach)
+
 	
-	# L-BFGS minimization -----------------------------------------------------------------------
-	from scipy.optimize import minimize
-	def matching_problem(p0_vec) :
-		"Energy minimized in the variable 'p0'."
-		p0 = p0_vec.reshape(q0.shape)
-		[c, dp_c, info] = Cost(q0, p0, Xt_x, Xt_mu)
-		matching_problem.Info = info
-		
-		if (matching_problem.it % 1 == 0) and (c < matching_problem.bestc) :
-			matching_problem.bestc = c
-			q1,p1,g1 = ShootingVisualization(q0, p0, np.array(g0))
-			Q1 = Curve(q1, connec) ; G1 = Curve(g1, cgrid )
-			DisplayShoot( Q0, G0, p0, Q1, G1, Xt, info, 
-			              matching_problem.it, scale_momentum, scale_attach)
-		
-		print('Iteration : ', matching_problem.it, ', cost : ', c, ' info : ', info.shape)
-		matching_problem.it += 1
-		# The fortran routines used by scipy.optimize expect float64 vectors
-		# instead of the gpu-friendly float32 matrices, so we need a slight conversion
-		return (c, dp_c.ravel().astype('float64'))
-	matching_problem.bestc = np.inf ; matching_problem.it = 0 ; matching_problem.Info = None
-	
-	time1 = time.time()
-	res = minimize( matching_problem,     # function to minimize
-					p0.ravel(),           # starting estimate
-					method = 'L-BFGS-B',  # an order 2 method
-					jac = True,           # matching_problems also returns the gradient
-					options = dict(
-						maxiter = 1000,   # max number of iterations
-						ftol    = .00000001,# Don't bother fitting the shapes to float precision
-						maxcor  = 10      # Number of previous grads used to approx. the Hessian
-					))
-	time2 = time.time()
-	
-	p0 = res.x.reshape(q0.shape)
-	print('Convergence success  : ', res.success, ', status = ', res.status)
-	print('Optimization message : ', res.message.decode('UTF-8'))
-	print('Final cost   after ', res.nit, ' iterations : ', res.fun)    
-	print('Elapsed time after ', res.nit, ' iterations : ', '{0:.2f}'.format(time2 - time1), 's')
-	return p0, matching_problem.Info
+	return 0
 def matching_demo(source_file, target_file, params, scale_mom = 1, scale_att = 1) :
 	Q0 = Curve.from_file(source_file) # Load source...
 	Xt = Curve.from_file(target_file) # and target.
 	
 	# Compute the optimal shooting momentum :
-	p0, info = perform_matching( Q0, Xt, params, scale_mom, scale_att) 
+	t = perform_matching( Q0, Xt, params, scale_mom, scale_att) 
 
 if __name__ == '__main__' :
 	plt.ion()
 	plt.show()
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.05,.01), scale_mom = .3,scale_att = .1)
-	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = 1.5, scale_att = 0)
+	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = EPS, scale_att = 0)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,.01), scale_mom = 1.5,scale_att = .1)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = 1.5,scale_att = 0)
 

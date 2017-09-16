@@ -129,14 +129,15 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach,
 	if scale_attach == 0 : # Convenient way of saying that we're using a transport plan.
 		ShowTransport( Q1, Xt, info, ax)
 	else :                 # Otherwise, it's a kernel matching term.
+		scale_attach = np.amax(info)
 		ax.imshow(info, interpolation='bilinear', origin='lower', 
 				vmin = -scale_attach, vmax = scale_attach, cmap=cm.RdBu, 
-				extent=(0,1, 0, 1)) 
-	G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
+				extent=[0,1,0,1]) 
+	#G1.plot(ax, color = (.8,.8,.8), linewidth = 1)
 	Xt.plot(ax, color = (.76, .29, 1.))
 	Q1.plot(ax)
 	
-	ax.axis([-.5, 1.5, -.5, 1.5]) ; ax.set_aspect('equal') ; plt.draw() ; plt.pause(0.001)
+	ax.axis([0, 1, 0, 1]) ; ax.set_aspect('equal') ; plt.draw() ; plt.pause(0.001)
 	fig.savefig( 'output/model_' + str(it) + form )
 # Curve representations =========================================================================
 
@@ -239,7 +240,7 @@ def _squared_distances(x, y) :
 def _k(x, y, s) :
 	"Returns the matrix of k(x_i,y_j)."
 	sq = _squared_distances(x, y) / (s**2)
-	return T.pow( 1. / ( 1. + sq ), .25 )
+	return T.exp(-sq) #T.pow( 1. / ( 1. + sq ), .25 )
 
 def _cross_kernels(q, x, s) :
 	"Returns the full k-correlation matrices between two point clouds q and x."
@@ -361,7 +362,7 @@ def _kernel_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 				 -2*T.sum(K_qx * q1_mu.dot(xt_mu.T))  )
 				 
 	# Info = the 2D graph of the blurred distance function
-	res    = 10 ; ticks = np.linspace( 0, 1, res + 1)[:-1] + 1/(2*res) 
+	res    = 100 ; ticks = np.linspace( 0, 1, res + 1)[:-1] + 1/(2*res) 
 	X,Y    = np.meshgrid( ticks, ticks )
 	points = T.TensorConstant( T.TensorType( config.floatX, [False,False] ) ,
 							   np.vstack( (X.ravel(), Y.ravel()) ).T.astype(config.floatX) )
@@ -476,7 +477,7 @@ def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 					method = 'L-BFGS-B',  # an order 2 method
 					jac = True,           # matching_problems also returns the gradient
 					options = dict(
-						maxiter = 1000,   # max number of iterations
+						maxiter = 2,   # max number of iterations
 						ftol    = .00000001,# Don't bother fitting the shapes to float precision
 						maxcor  = 10      # Number of previous grads used to approx. the Hessian
 					))
@@ -499,7 +500,7 @@ if __name__ == '__main__' :
 	plt.ion()
 	plt.show()
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.05,.01), scale_mom = .3,scale_att = .1)
-	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  0), scale_mom = 1.5, scale_att = 0)
+	matching_demo('amoeba_1.png',        'amoeba_2.png',(.05,  .03), scale_mom = 1.5, scale_att = .01)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,.01), scale_mom = 1.5,scale_att = .1)
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = 1.5,scale_att = 0)
 

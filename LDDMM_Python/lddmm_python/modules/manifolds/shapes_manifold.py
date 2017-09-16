@@ -117,7 +117,7 @@ class ShapesManifold :
 		a geodesic shooting.
 		ranges is a list of (min, max), 
 		"""
-		np_per_lines = (nlines-1) * 4 + 1
+		np_per_lines = (nlines-1) * 10 + 1
 		
 		assert len(ranges) == self.dimension
 		
