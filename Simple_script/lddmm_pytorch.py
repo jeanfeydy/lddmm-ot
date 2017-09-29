@@ -1,11 +1,14 @@
 # Import the relevant tools
 import time                 # to measure performance
 import numpy as np          # standard array library
-import theano               # Autodiff & symbolic calculus library :
-import theano.tensor as T   #             - mathematical tools;
-from   theano import config, printing #   - printing of the Sinkhorn error.
+import torch
+from   torch.autograd import Variable
+import torch.optim as optim
 
-
+# No need for a ~/.theanorc file anymore !
+use_cuda = torch.cuda.is_available()
+dtype     = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
+dtypeint = torch.cuda.LongTensor  if use_cuda else torch.LongTensor
 # Display routines :
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -44,7 +47,7 @@ def resample(line, npoints) :
 		connec = np.vstack( (connec[:-1,:],  [len(p)-1, 0]) )
 	return (p, connec)
 
-def level_curves(fname, npoints = 120, smoothing = 10, level = 0.5) :
+def level_curves(fname, npoints = 200, smoothing = 10, level = 0.5) :
 	"Loads regularly sampled curves from a .PNG image."
 	# Find the contour lines
 	img = misc.imread(fname, flatten = True) # Grayscale
@@ -116,6 +119,7 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach)
 	G0.plot(ax, color = (.8,.8,.8), linewidth = 1)
 	Xt.plot(ax, color = (.85, .6, 1.))
 	Q0.plot(ax)
+	
 	ax.quiver( Q0.points[:,0], Q0.points[:,1], p0[:,0], p0[:,1], 
 	           scale = scale_momentum, color='blue')
 	
@@ -125,7 +129,6 @@ def DisplayShoot(Q0, G0, p0, Q1, G1, Xt, info, it, scale_momentum, scale_attach)
 	# Figure at "t = 1" : -----------------------------------------------------------------------
 	fig = plt.figure(2, figsize = (10,10), dpi=100); fig.clf(); ax = fig.add_subplot(1, 1, 1)
 	ax.autoscale(tight=True)
-	
 	if scale_attach == 0 : # Convenient way of saying that we're using a transport plan.
 		ShowTransport( Q1, Xt, info, ax)
 	else :                 # Otherwise, it's a kernel matching term.
@@ -166,14 +169,13 @@ class Curve :
 	@staticmethod
 	def _vertices_to_measure( q, connec ) :
 		"""
-		Transforms a theano array 'q1' into a measure, assuming a connectivity matrix connec.
-		It is the Theano equivalent of 'to_measure' : as theano only handles numeric arrays,
-		it could not be implemented in a neat Object-Oriented fashion.
+		Transforms a torch array 'q1' into a measure, assuming a connectivity matrix connec.
+		It is the Torch equivalent of 'to_measure'.
 		"""
 		a = q[connec[:,0]] ; b = q[connec[:,1]]
 		# A curve is represented as a sum of diracs, one for each segment
-		x  = .5 * (a + b)                 # Mean
-		mu = T.sqrt( ((b-a)**2).sum(1) )  # Length
+		x  = .5 * (a + b)                     # Mean
+		mu = torch.sqrt( ((b-a)**2).sum(1) )  # Length
 		return (x, mu)
 		
 	def plot(self, ax, color = 'rainbow', linewidth = 3) :
@@ -201,45 +203,34 @@ class Curve :
 			data = VtkData(fname)
 			points = np.array(data.structure.points)[:,0:2] # Discard "Z"
 			connec = np.array(data.structure.polygons)
-			return Curve((points + 150)/300, connec)
+			return Curve((points + 150)/300, connec) # offset for the skull dataset...
 			
 
 
 
-
-
-# My .theanorc reads as follow :
-# [nvcc]
-# flags=-D_FORCE_INLINES
-#
-# [global]
-# device=cuda
-# floatX=float32
-#
-# The first section, copy-pasted from the "easy-install on Ubuntu", is supposed to fix a gcc bug.
-# The second one allows me to use my GPU as the default computing device in float32 precision.
-#
-# On my Dell laptop, it is a GeForce GTX 960M with 640 Cuda cores and 2Gb of memory.
-
-
-# Theano is a fantastic deep learning library : it transforms symbolic python code
+# Pytorch is a fantastic deep learning library : it transforms symbolic python code
 # into highly optimized CPU/GPU binaries, which are called in the background seamlessly.
+# It can be thought of as a "heir" to the legacy Theano library (RIP :'-( ):
+# As you'll see, migrating a codebase from one to another is fairly simple !
 #
-# We now show how to code a whole LDDMM pipeline into one (!!!) page of theano symbolic code.
+# N.B. : On my Dell laptop, I have a GeForce GTX 960M with 640 Cuda cores and 2Gb of memory.
+#
+# We now show how to code a whole LDDMM pipeline into one (!!!) page of torch symbolic code.
 
 # Part 1 : cometric on the space of landmarks, kinetic energy on the phase space (Hamiltonian)===
 
 
 def _squared_distances(x, y) :
 	"Returns the matrix of $\|x_i-y_j\|^2$."
-	x_col = x.dimshuffle(0, 'x', 1)
-	y_lin = y.dimshuffle('x', 0, 1)
-	return T.sum( (x_col - y_lin)**2 , 2 )
+	x_col = x.unsqueeze(1) # Theano : x.dimshuffle(0, 'x', 1)
+	y_lin = y.unsqueeze(0) # Theano : y.dimshuffle('x', 0, 1)
+	return torch.sum( (x_col - y_lin)**2 , 2 )
 
 def _k(x, y, s) :
 	"Returns the matrix of k(x_i,y_j)."
 	sq = _squared_distances(x, y) / (s**2)
-	return T.pow( 1. / ( 1. + sq ), .25 )
+	#return torch.exp( -sq )
+	return torch.pow( 1. / ( 1. + sq ), .25 )
 
 def _cross_kernels(q, x, s) :
 	"Returns the full k-correlation matrices between two point clouds q and x."
@@ -250,16 +241,16 @@ def _cross_kernels(q, x, s) :
 
 def _Hqp(q, p, sigma) :
 	"The hamiltonian, or kinetic energy of the shape q with momenta p."
-	pKqp =  _k(q, q, sigma) * (p.dot(p.T))# Use a simple isotropic kernel
-	return .5 * T.sum(pKqp)               # $H(q,p) = \frac{1}{2} * sum_{i,j} k(x_i,x_j) p_i.p_j$
+	pKqp =  _k(q, q, sigma) * (p @ p.t()) # Use a simple isotropic kernel
+	return .5 * pKqp.sum()                # $H(q,p) = \frac{1}{2} * sum_{i,j} k(x_i,x_j) p_i.p_j$
     
     
 # Part 2 : Geodesic shooting ====================================================================
 # The partial derivatives of the Hamiltonian are automatically computed !
 def _dq_Hqp(q,p,sigma) : 
-	return T.grad(_Hqp(q,p,sigma), q)
+	return torch.autograd.grad(_Hqp(q,p,sigma), q, create_graph=True)[0]
 def _dp_Hqp(q,p,sigma) :
-	return T.grad(_Hqp(q,p,sigma), p)
+	return torch.autograd.grad(_Hqp(q,p,sigma), p, create_graph=True)[0]
 
 def _hamiltonian_step(q,p, sigma) :
 	"Simplistic euler scheme step with dt = .1."
@@ -268,32 +259,23 @@ def _hamiltonian_step(q,p, sigma) :
 
 def _HamiltonianShooting(q, p, sigma) :
 	"Shoots to time 1 a k-geodesic starting (at time 0) from q with momentum p."
-	# Here, we use the "scan" theano routine, which  can be understood as a "for" loop
-	result, updates = theano.scan(fn            = _hamiltonian_step,
-								  outputs_info  = [q,p],
-								  non_sequences = sigma,
-								  n_steps       = 10            )  # We hardcode the "dt = .1"
-	final_result = [result[0][-1], result[1][-1]]  # We do not store the intermediate results
-	return final_result                            # and only return the final state + momentum
+	for t in range(10) :
+		q,p = _hamiltonian_step(q, p, sigma) # Let's hardcode the "dt = .1"
+	return [q,p]                             # and only return the final state + momentum
 
 
 
 # Part 2bis : Geodesic shooting + deformation of the ambient space, for visualization ===========
-def _HamiltonianCarrying(q0, p0, grid0, sigma) :
+def _HamiltonianCarrying(q, p, g, s) :
 	"""
 	Similar to _HamiltonianShooting, but also conveys information about the deformation of
 	an arbitrary point cloud 'grid' in the ambient space.
 	""" 
-	def _carrying_step(q,p,g,s) :
-		"Simplistic euler scheme step with dt = .1."
-		return [q + .1 * _dp_Hqp(q,p, s),  p - .1 * _dq_Hqp(q,p, s), g + .1 * _k(g, q, s).dot(p)]
-	# Here, we use the "scan" theano routine, which  can be understood as a "for" loop
-	result, updates = theano.scan(fn            = _carrying_step,
-								  outputs_info  = [q0,p0,grid0],
-								  non_sequences = sigma,
-								  n_steps       = 10           ) # We hardcode the "dt = .1"
-	final_result = [result[0][-1], result[1][-1], result[2][-1]] # Don't store intermediate steps
-	return final_result                            # return the final state + momentum + grid
+	for t in range(10) : # Let's hardcode the "dt = .1"
+		q,p,g = [q + .1 * _dp_Hqp(q,p, s), 
+		         p - .1 * _dq_Hqp(q,p, s), 
+		         g + .1 * _k(g, q, s) @ p]
+	return q,p,g         # return the final state + momentum + grid
 
 # Part 3 : Data attachment ======================================================================
 
@@ -307,7 +289,7 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	mu = q1_mu ; nu = xt_mu
 	
 	# Parameters of the Sinkhorn algorithm.
-	epsilon            = (.1)**2          # regularization parameter
+	epsilon            = (.02)**2          # regularization parameter
 	rho                = (.5) **2          # unbalanced transport (See PhD Th. of Lenaic Chizat)
 	niter              = 10000             # max niter in the sinkhorn loop
 	tau                = -.8               # nesterov-like acceleration
@@ -320,55 +302,48 @@ def _ot_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 		return tau * u + (1-tau) * u1 
 	def M(u,v)  : 
 		"$M_{ij} = (-c_{ij} + u_i + v_j) / \epsilon$"
-		return (-c + u.dimshuffle(0,'x') + v.dimshuffle('x',0)) / epsilon
-	lse = lambda A    : T.log(T.sum( T.exp(A), axis=1 ) + 1e-6) # slight modif to prevent NaN
+		return (-c + u.unsqueeze(1) + v.unsqueeze(0)) / epsilon
+	lse = lambda A    : torch.log(torch.exp(A).sum( 1 ) + 1e-6) # slight modif to prevent NaN
 	
 	# Actual Sinkhorn loop ......................................................................
-	# Iteration step :
-	def sinkhorn_step(u, v, foo) :
-		u1=u # useful to check the update
-		u = ave( u, lam * ( epsilon * ( T.log(mu) - lse(M(u,v))   ) + u ) )
-		v = ave( v, lam * ( epsilon * ( T.log(nu) - lse(M(u,v).T) ) + v ) )
-		err = T.sum(abs(u - u1))
+	u,v,err = 0.*mu, 0.*nu, 0.
+	actual_nits = 0
+	
+	for i in range(niter) :
+		u1= u # useful to check the update
+		u = ave( u, lam * ( epsilon * ( torch.log(mu) - lse(M(u,v))   ) + u ) )
+		v = ave( v, lam * ( epsilon * ( torch.log(nu) - lse(M(u,v).t()) ) + v ) )
+		err = (u - u1).abs().sum()
 		
-		return (u,v,err), theano.scan_module.until(err < 1e-4) # "break" the loop if error < tol
-		
-	# Scan = "For loop" :
-	err0 = np.arange(1, dtype=config.floatX)[0]
-	result, updates = theano.scan( fn            = sinkhorn_step,            # Iterated routine
-								   outputs_info  = [(0.*mu), (0.*nu), err0], # Starting estimates
-								   n_steps       = niter                   # Number of iterations
-								 )    
-	U, V = result[0][-1], result[1][-1] # We only keep the final dual variables
-	Gamma = T.exp( M(U,V) )             # Eventual transport plan g = diag(a)*K*diag(b)
-	cost  = T.sum( Gamma * c )         # Simplistic cost, chosen for readability in this tutorial
-	if False :
-		print_err_shape = printing.Print('error  : ', attrs=['shape'])
-		errors          = print_err_shape(result[2])
-		print_err  = printing.Print('error  : ') ; err_fin  = print_err(errors[-1])
-		cost += .00000001 * err_fin   # hack to prevent the pruning of the error-printing node...
+		actual_nits += 1
+		if (err < 1e-4).data.cpu().numpy() :
+			break
+	U, V = u, v 
+	Gamma = torch.exp( M(U,V) )            # Eventual transport plan g = diag(a)*K*diag(b)
+	cost  = torch.sum( Gamma * c )         # Simplistic cost, chosen for readability in this tutorial
+	
+	print('Sinkhorn error after ' + str(actual_nits) + ' iterations : ' + str(err.data.cpu().numpy()))
 	return [cost, Gamma]
+	
 def _kernel_matching(q1_x, q1_mu, xt_x, xt_mu, radius) :
 	"""
 	Given two measures q1 and xt represented by locations/weights arrays, 
 	outputs a kernel-fidelity term and an empty 'info' array.
 	"""
 	K_qq, K_qx, K_xx = _cross_kernels(q1_x, xt_x, radius)
-	q1_mu = q1_mu.dimshuffle(0,'x')  # column
-	xt_mu = xt_mu.dimshuffle(0,'x')  # column
-	cost = .5 * (   T.sum(K_qq * q1_mu.dot(q1_mu.T)) \
-				 +  T.sum(K_xx * xt_mu.dot(xt_mu.T)) \
-				 -2*T.sum(K_qx * q1_mu.dot(xt_mu.T))  )
+	cost = .5 * (   torch.sum(K_qq * torch.ger(q1_mu,q1_mu)) \
+				 +  torch.sum(K_xx * torch.ger(xt_mu,xt_mu)) \
+				 -2*torch.sum(K_qx * torch.ger(q1_mu,xt_mu))  )
 				 
 	# Info = the 2D graph of the blurred distance function
+	# Increase res if you want to get nice smooth pictures...
 	res    = 10 ; ticks = np.linspace( 0, 1, res + 1)[:-1] + 1/(2*res) 
 	X,Y    = np.meshgrid( ticks, ticks )
-	points = T.TensorConstant( T.TensorType( config.floatX, [False,False] ) ,
-							   np.vstack( (X.ravel(), Y.ravel()) ).T.astype(config.floatX) )
+	points = Variable(torch.from_numpy(np.vstack( (X.ravel(), Y.ravel()) ).T).type(dtype), requires_grad=False)
 							   
-	info   = _k( points, q1_x , radius ).dot(q1_mu) \
-	       - _k( points, xt_x , radius ).dot(xt_mu)
-	return [cost , info.reshape( (res,res) ) ]
+	info   = _k( points, q1_x , radius ) @ q1_mu \
+	       - _k( points, xt_x , radius ) @ xt_mu
+	return [cost , info.view( (res,res) ) ]
 
 def _data_attachment(q1_measure, xt_measure, radius) :
 	"Given two measures and a radius, returns a cost - as a Theano symbolic variable."
@@ -397,97 +372,93 @@ def _cost( q,p, xt_measure, connec, params ) :
 	# To compute a data attachment cost, we need the set of vertices 'q1' into a measure.
 	q1_measure  = Curve._vertices_to_measure( q1, connec ) 
 	attach_info = _data_attachment( q1_measure,  xt_measure,  r )
-	return [ .1* _Hqp(q, p, s) + 1* attach_info[0] , attach_info[1] ]
+	return [ .01* _Hqp(q, p, s) + 1* attach_info[0] , attach_info[1] ]
 
 # The discrete backward scheme is automatically computed :
 def _dcost_p( q,p, xt_measure, connec, params ) :
 	"The gradients of C wrt. p_0 is automatically computed."
-	return T.grad( _cost(q,p, xt_measure, connec, params)[0] , p)
+	return torch.autograd.grad( _cost(q,p, xt_measure, connec, params)[0] , p)
 
 #================================================================================================
 
 def VisualizationRoutine(Q0, params) :
-	print('Compiling the ShootingVisualization routine.')
-	time1 = time.time()
-	q, p, grid = T.matrices('q', 'p', 'g') #  assign types to the teano variables
-	ShootingVisualization = theano.function([q,p, grid],                                # input
-										  _HamiltonianCarrying(q, p, grid, params[0]),  # output
-										  allow_input_downcast=True)  # GPU = float32 only, 
-                                  # whereas numpy uses float64 : we allow silent conversion
-	time2 = time.time()   
-	print('Compiled in : ', '{0:.2f}'.format(time2 - time1), 's')
+	def ShootingVisualization(q,p,grid) :
+		return _HamiltonianCarrying(q, p, grid, params[0])
 	return ShootingVisualization
 
 def perform_matching( Q0, Xt, params, scale_momentum = 1, scale_attach = 1) :
 	"Performs a matching from the source Q0 to the target Xt, returns the optimal momentum P0."
 	(Xt_x, Xt_mu) = Xt.to_measure()      # Transform the target into a measure once and for all
-	q0 = Q0.points ; p0 = np.zeros(q0.shape)    # Null initialization for the shooting momentum
-	
+	connec = torch.from_numpy(Q0.connectivity).type(dtypeint) ; 
 	# Compilation -------------------------------------------------------------------------------
-	print('Compiling the energy functional.')
-	time1 = time.time()
 	# Cost is a function of 6 parameters :
 	# The source 'q',                    the starting momentum 'p',
 	# the target points 'xt_x',          the target weights 'xt_mu',
 	# the deformation scale 'sigma_def', the attachment scale 'sigma_att'.
-	q, p, xt_x = T.matrices('q', 'p', 'xt_x') ; xt_mu = T.vector('xt_mu') #  assign types
+	q0    = Variable(torch.from_numpy(    Q0.points ).type(dtype), requires_grad=True)
+	p0    = Variable(torch.from_numpy( 0.*Q0.points ).type(dtype), requires_grad=True )
+	Xt_x  = Variable(torch.from_numpy( Xt_x         ).type(dtype), requires_grad=False)
+	Xt_mu = Variable(torch.from_numpy( Xt_mu        ).type(dtype), requires_grad=False)
 	
 	# Compilation. Depending on settings specified in the ~/.theanorc file or explicitely given
 	# at execution time, this will produce CPU or GPU code under the hood.
-	Cost  = theano.function([q,p, xt_x,xt_mu ],
-							[   _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[0], 
-							 _dcost_p( q,p, (xt_x,xt_mu), Q0.connectivity, params )   ,
-							    _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[1] ],  
-							allow_input_downcast=True)
-	time2 = time.time()   
-	print('Compiled in : ', '{0:.2f}'.format(time2 - time1), 's')
-	
+	def Cost(q,p, xt_x,xt_mu) : 
+		return _cost( q,p, (xt_x,xt_mu), connec, params )
+		#return [   _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[0], 
+		#		_dcost_p( q,p, (xt_x,xt_mu), Q0.connectivity, params )   ,
+		#		   _cost( q,p, (xt_x,xt_mu), Q0.connectivity, params )[1] ]
+							
 	# Display pre-computing ---------------------------------------------------------------------
-	connec = Q0.connectivity ; q0 = Q0.points ; g0,cgrid = GridData() ; G0 = Curve(g0, cgrid )
+	g0,cgrid = GridData() ; G0 = Curve(g0, cgrid )
+	g0 = Variable( torch.from_numpy( g0 ).type(dtype), requires_grad = False )
 	# Given q0, p0 and grid points grid0 , outputs (q1,p1,grid1) after the flow
 	# of the geodesic equations from t=0 to t=1 :
 	ShootingVisualization = VisualizationRoutine(q0, params) 
 	
 	# L-BFGS minimization -----------------------------------------------------------------------
 	from scipy.optimize import minimize
-	def matching_problem(p0_vec) :
+	def matching_problem(p0) :
 		"Energy minimized in the variable 'p0'."
-		p0 = p0_vec.reshape(q0.shape)
-		[c, dp_c, info] = Cost(q0, p0, Xt_x, Xt_mu)
-		matching_problem.Info = info
+		[c, info] = Cost(q0, p0, Xt_x, Xt_mu)
 		
-		if (matching_problem.it % 20 == 0) and (c < matching_problem.bestc) :
-			matching_problem.bestc = c
-			q1,p1,g1 = ShootingVisualization(q0, p0, np.array(g0))
+		matching_problem.Info = info
+		if (matching_problem.it % 20 == 0):# and (c.data.cpu().numpy()[0] < matching_problem.bestc):
+			matching_problem.bestc = c.data.cpu().numpy()[0]
+			q1,p1,g1 = ShootingVisualization(q0, p0, g0)
+			
+			q1 = q1.data.cpu().numpy()
+			p1 = p1.data.cpu().numpy()
+			g1 = g1.data.cpu().numpy()
+			
 			Q1 = Curve(q1, connec) ; G1 = Curve(g1, cgrid )
-			DisplayShoot( Q0, G0, p0, Q1, G1, Xt, info, 
+			DisplayShoot( Q0, G0,       p0.data.cpu().numpy(), 
+			              Q1, G1, Xt, info.data.cpu().numpy(),
 			              matching_problem.it, scale_momentum, scale_attach)
 		
-		print('Iteration : ', matching_problem.it, ', cost : ', c, ' info : ', info.shape)
+		print('Iteration : ', matching_problem.it, ', cost : ', c.data.cpu().numpy(), 
+		                                            ' info : ', info.data.cpu().numpy().shape)
 		matching_problem.it += 1
-		# The fortran routines used by scipy.optimize expect float64 vectors
-		# instead of the gpu-friendly float32 matrices, so we need a slight conversion
-		return (c, dp_c.ravel().astype('float64'))
+		return c
 	matching_problem.bestc = np.inf ; matching_problem.it = 0 ; matching_problem.Info = None
 	
+	optimizer = torch.optim.LBFGS(
+					[p0],
+					max_iter = 1000, 
+					tolerance_change = .000001, 
+					history_size = 10)
+	#optimizer = torch.optim.Adam(
+	#				[p0])
 	time1 = time.time()
-	res = minimize( matching_problem,     # function to minimize
-					p0.ravel(),           # starting estimate
-					method = 'L-BFGS-B',  # an order 2 method
-					jac = True,           # matching_problems also returns the gradient
-					options = dict(
-						maxiter = 1000,   # max number of iterations
-						ftol    = .000001,# Don't bother fitting the shapes to float precision
-						maxcor  = 10      # Number of previous grads used to approx. the Hessian
-					))
+	def closure():
+		optimizer.zero_grad()
+		c = matching_problem(p0)
+		c.backward()
+		return c
+	for it in range(100) :
+		optimizer.step(closure)
 	time2 = time.time()
-	
-	p0 = res.x.reshape(q0.shape)
-	print('Convergence success  : ', res.success, ', status = ', res.status)
-	print('Optimization message : ', res.message.decode('UTF-8'))
-	print('Final cost   after ', res.nit, ' iterations : ', res.fun)    
-	print('Elapsed time after ', res.nit, ' iterations : ', '{0:.2f}'.format(time2 - time1), 's')
 	return p0, matching_problem.Info
+
 def matching_demo(source_file, target_file, params, scale_mom = 1, scale_att = 1) :
 	Q0 = Curve.from_file(source_file) # Load source...
 	Xt = Curve.from_file(target_file) # and target.
@@ -500,7 +471,8 @@ if __name__ == '__main__' :
 	plt.show()
 	#matching_demo('australopithecus.vtk','sapiens.vtk', (.05,.01), scale_mom = .3,scale_att = .1)
 	#matching_demo('amoeba_1.png',        'amoeba_2.png',(.25,  0), scale_mom = 1.5, scale_att = 0)
-	matching_demo('australopithecus.vtk','sapiens.vtk', (.25,.01), scale_mom = 1.5,scale_att = .1)
-	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = 1.5,scale_att = 0)
+	#matching_demo('australopithecus.vtk','sapiens.vtk', (.25,0), scale_mom = .05,scale_att = 0)
+	#matching_demo('australopithecus.vtk','sapiens.vtk', (.1,0), scale_mom = .05,scale_att = 0)
+	matching_demo('amoeba_1.png',        'amoeba_2.png', (.1,0), scale_mom = .05,scale_att = 0)
 
 
