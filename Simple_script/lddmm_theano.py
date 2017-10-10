@@ -44,7 +44,7 @@ def resample(line, npoints) :
 		connec = np.vstack( (connec[:-1,:],  [len(p)-1, 0]) )
 	return (p, connec)
 
-def level_curves(fname, npoints = 120, smoothing = 10, level = 0.5) :
+def level_curves(fname, npoints = 200, smoothing = 10, level = 0.5) :
 	"Loads regularly sampled curves from a .PNG image."
 	# Find the contour lines
 	img = misc.imread(fname, flatten = True) # Grayscale
