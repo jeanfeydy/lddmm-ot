@@ -17,6 +17,9 @@ data attachment term introduced in the paper :
 
 - A fully-fledged Matlab toolbox, placed in the 'matlab/' directory.
 
+It also hosts a mini implementation in Pytorch, that we will strive to make as
+memory-efficient as possible. Hopefully, we can find a way to relieve the major
+bottleneck of autodiffs libraries, as of 2017.
 
 --------------------------------------------------------------------------------
 Instructions for the python implementations

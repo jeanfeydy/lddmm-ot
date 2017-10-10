@@ -1,6 +1,8 @@
 # Will ignore result files in the several examples :
 *results*
 *output*
+!/Pytorch/output/.gitkeep
+!/Simple_script/output/.gitkeep
 
 # Will ignore DS_Stores files
 .DS_Store
