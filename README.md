@@ -1,3 +1,5 @@
+**N.B.:** This repository is out of date. A reference implementation of Optimal Transport divergences for shape registration is now available on the [global-divergences](https://github.com/jeanfeydy/global-divergences) repository.
+
 # lddmm-ot
 MICCAI 2017 Paper - Optimal Transport for Diffeomorphic Registration
 
